@@ -1,28 +1,26 @@
+import java.awt.*;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import javax.swing.*;
-import java.awt.*;
 
 public class proje {
     public static void main(String[] args) throws IOException {
         Csv csv = new Csv();
-        csv.csvOkuma("sonar data.csv");
+        csv.csvOkuma("spambase.csv");
         csv.veriyiAyir(csv.datalar, csv.siniflar, 0.66);
 
         LinearRegression lineerModel = new LinearRegression();
         lineerModel.egit(csv.egitimVerisi, csv.egitimSiniflari);
-        double lineerDogruluk = lineerModel.dogrulukHesapla(csv.testVerisi, csv.testSiniflari);
-        System.out.println("Lineer Regresyon Test Doğruluk Oranı (Accuracy): %" + (lineerDogruluk * 100));
+        double[] lineerMetrikler = lineerModel.metrikleriHesaplaVeYazdir(csv.testVerisi, csv.testSiniflari);
 
         LogisticRegression lojistikModel = new LogisticRegression();
         lojistikModel.egit(csv.egitimVerisi, csv.egitimSiniflari);
-        double lojistikDogruluk = lojistikModel.dogrulukHesapla(csv.testVerisi, csv.testSiniflari);
-        System.out.println("Lojistik Regresyon Test Doğruluk Oranı (Accuracy): %" + (lojistikDogruluk * 100));
+        double[] lojistikMetrikler = lojistikModel.metrikleriHesaplaVeYazdir(csv.testVerisi, csv.testSiniflari);
 
-        GrafikPenceresi.goster(lineerModel.hataGecmisi, lojistikModel.hataGecmisi, lineerDogruluk, lojistikDogruluk);
+        GrafikPenceresi.goster(lineerModel.hataGecmisi, lojistikModel.hataGecmisi, lineerMetrikler, lojistikMetrikler);
     }
 }
 
@@ -164,7 +162,7 @@ class LinearRegression {
     double[] gradyanLineerW;
     double gradyanLineerB = 0.0;
     double ogrenmeOrani = 0.003;
-    int iterasyon = 10000;
+    int iterasyon = 100000;
     double tolerans = 1e-6;
     List<Double> hataGecmisi = new ArrayList<>();
 
@@ -172,7 +170,7 @@ class LinearRegression {
         int satirSayisi = X.length;
         int ozellikSayisi = X[0].length;
         agirliklar = new double[ozellikSayisi];
-        double oncekiMse = Double.MAX_VALUE;
+        double oncekiJw = Double.MAX_VALUE;
         hataGecmisi.clear();
 
         for (int epoch = 0; epoch < iterasyon; epoch++) {
@@ -193,20 +191,20 @@ class LinearRegression {
             }
 
             for (int j = 0; j < ozellikSayisi; j++) {
-                gradyanLineerW[j] = (2.0 / satirSayisi) * gradyanLineerW[j];
+                gradyanLineerW[j] = (1.0 / satirSayisi) * gradyanLineerW[j];
                 agirliklar[j] -= ogrenmeOrani * gradyanLineerW[j];
             }
-            gradyanLineerB = (2.0 / satirSayisi) * gradyanLineerB;
+            gradyanLineerB = (1.0 / satirSayisi) * gradyanLineerB;
             b -= ogrenmeOrani * gradyanLineerB;
 
-            double mse = toplamKareHata / satirSayisi;
-            hataGecmisi.add(mse);
+            double jw = toplamKareHata / (2.0 * satirSayisi);
+            hataGecmisi.add(jw);
 
-            if (Math.abs(oncekiMse - mse) < tolerans) {
-                System.out.println("Lineer Regresyon Erken Durdurma -> Epoch: " + epoch + " | Son MSE: " + mse);
+            if (Math.abs(oncekiJw - jw) < tolerans) {
+                System.out.println("Lineer Regresyon Erken Durdurma -> Epoch: " + epoch + " | Son J(w): " + jw);
                 break;
             }
-            oncekiMse = mse;
+            oncekiJw = jw;
         }
 
         System.out.println("Lineer Regresyon Son Gradyan W: " + Arrays.toString(gradyanLineerW));
@@ -225,14 +223,30 @@ class LinearRegression {
         return tahminEtHam(x) >= 0.5 ? 1.0 : 0.0;
     }
 
-    double dogrulukHesapla(double[][] testX, double[] testY) {
-        int dogruSayisi = 0;
+    double[] metrikleriHesaplaVeYazdir(double[][] testX, double[] testY) {
+        int tp = 0, tn = 0, fp = 0, fn = 0;
         for (int i = 0; i < testX.length; i++) {
-            if (sinifTahminEt(testX[i]) == testY[i]) {
-                dogruSayisi++;
-            }
+            double tahmin = sinifTahminEt(testX[i]);
+            double gercek = testY[i];
+            if (tahmin == 1.0 && gercek == 1.0) tp++;
+            else if (tahmin == 0.0 && gercek == 0.0) tn++;
+            else if (tahmin == 1.0 && gercek == 0.0) fp++;
+            else if (tahmin == 0.0 && gercek == 1.0) fn++;
         }
-        return (double) dogruSayisi / testX.length;
+
+        double accuracy = (double) (tp + tn) / testX.length;
+        double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0.0;
+        double recall = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0.0;
+        double f1 = (precision + recall) > 0 ? (2.0 * precision * recall) / (precision + recall) : 0.0;
+
+        System.out.println("\n--- LINEER REGRESYON PERFORMANS METRİKLERİ ---");
+        System.out.println("Confusion Matrix -> TP: " + tp + " | TN: " + tn + " | FP: " + fp + " | FN: " + fn);
+        System.out.printf("Accuracy (Doğruluk) : %%%.2f\n", accuracy * 100);
+        System.out.printf("Precision (Kesinlik): %%%.2f\n", precision * 100);
+        System.out.printf("Recall (Duyarlılık) : %%%.2f\n", recall * 100);
+        System.out.printf("F1-Score            : %%%.2f\n\n", f1 * 100);
+
+        return new double[]{accuracy, precision, recall, f1, tp, tn, fp, fn};
     }
 }
 
@@ -241,8 +255,8 @@ class LogisticRegression {
     double b = 0.0;
     double[] gradyanW;
     double gradyanB = 0.0;
-    double ogrenmeOrani = 0.05;
-    int iterasyon = 10000;
+    double ogrenmeOrani = 0.003;
+    int iterasyon = 100000;
     double tolerans = 1e-6;
     List<Double> hataGecmisi = new ArrayList<>();
 
@@ -254,7 +268,7 @@ class LogisticRegression {
         int satirSayisi = X.length;
         int ozellikSayisi = X[0].length;
         agirliklar = new double[ozellikSayisi];
-        double oncekiLoss = Double.MAX_VALUE;
+        double oncekiJw = Double.MAX_VALUE;
         hataGecmisi.clear();
 
         for (int epoch = 0; epoch < iterasyon; epoch++) {
@@ -282,14 +296,14 @@ class LogisticRegression {
             gradyanB = (1.0 / satirSayisi) * gradyanB;
             b -= ogrenmeOrani * gradyanB;
 
-            double ortalamaLoss = toplamLoss / satirSayisi;
-            hataGecmisi.add(ortalamaLoss);
+            double jw = toplamLoss / satirSayisi;
+            hataGecmisi.add(jw);
 
-            if (Math.abs(oncekiLoss - ortalamaLoss) < tolerans) {
-                System.out.println("Lojistik Regresyon Erken Durdurma -> Epoch: " + epoch + " | Son Loss: " + ortalamaLoss);
+            if (Math.abs(oncekiJw - jw) < tolerans) {
+                System.out.println("Lojistik Regresyon Erken Durdurma -> Epoch: " + epoch + " | Son J(w): " + jw);
                 break;
             }
-            oncekiLoss = ortalamaLoss;
+            oncekiJw = jw;
         }
 
         System.out.println("Lojistik Regresyon Son Gradyan W: " + Arrays.toString(gradyanW));
@@ -308,36 +322,52 @@ class LogisticRegression {
         return olasilikTahminEt(x) >= 0.5 ? 1.0 : 0.0;
     }
 
-    double dogrulukHesapla(double[][] testX, double[] testY) {
-        int dogruSayisi = 0;
+    double[] metrikleriHesaplaVeYazdir(double[][] testX, double[] testY) {
+        int tp = 0, tn = 0, fp = 0, fn = 0;
         for (int i = 0; i < testX.length; i++) {
-            if (sinifTahminEt(testX[i]) == testY[i]) {
-                dogruSayisi++;
-            }
+            double tahmin = sinifTahminEt(testX[i]);
+            double gercek = testY[i];
+            if (tahmin == 1.0 && gercek == 1.0) tp++;
+            else if (tahmin == 0.0 && gercek == 0.0) tn++;
+            else if (tahmin == 1.0 && gercek == 0.0) fp++;
+            else if (tahmin == 0.0 && gercek == 1.0) fn++;
         }
-        return (double) dogruSayisi / testX.length;
+
+        double accuracy = (double) (tp + tn) / testX.length;
+        double precision = (tp + fp) > 0 ? (double) tp / (tp + fp) : 0.0;
+        double recall = (tp + fn) > 0 ? (double) tp / (tp + fn) : 0.0;
+        double f1 = (precision + recall) > 0 ? (2.0 * precision * recall) / (precision + recall) : 0.0;
+
+        System.out.println("\n--- LOJİSTİK REGRESYON PERFORMANS METRİKLERİ ---");
+        System.out.println("Confusion Matrix -> TP: " + tp + " | TN: " + tn + " | FP: " + fp + " | FN: " + fn);
+        System.out.printf("Accuracy (Doğruluk) : %%%.2f\n", accuracy * 100);
+        System.out.printf("Precision (Kesinlik): %%%.2f\n", precision * 100);
+        System.out.printf("Recall (Duyarlılık) : %%%.2f\n", recall * 100);
+        System.out.printf("F1-Score            : %%%.2f\n\n", f1 * 100);
+
+        return new double[]{accuracy, precision, recall, f1, tp, tn, fp, fn};
     }
 }
 
 class GrafikPenceresi extends JPanel {
     List<Double> lineerHata;
     List<Double> lojistikHata;
-    double lineerDogruluk;
-    double lojistikDogruluk;
+    double[] lineerMetrikler;
+    double[] lojistikMetrikler;
 
-    GrafikPenceresi(List<Double> lineerHata, List<Double> lojistikHata, double lineerDogruluk, double lojistikDogruluk) {
+    GrafikPenceresi(List<Double> lineerHata, List<Double> lojistikHata, double[] lineerMetrikler, double[] lojistikMetrikler) {
         this.lineerHata = lineerHata;
         this.lojistikHata = lojistikHata;
-        this.lineerDogruluk = lineerDogruluk;
-        this.lojistikDogruluk = lojistikDogruluk;
+        this.lineerMetrikler = lineerMetrikler;
+        this.lojistikMetrikler = lojistikMetrikler;
         setBackground(Color.WHITE);
     }
 
-    static void goster(List<Double> lineerHata, List<Double> lojistikHata, double lineerDogruluk, double lojistikDogruluk) {
-        JFrame pencere = new JFrame("Lineer vs Lojistik Regresyon Performans Grafikleri");
+    static void goster(List<Double> lineerHata, List<Double> lojistikHata, double[] lineerMetrikler, double[] lojistikMetrikler) {
+        JFrame pencere = new JFrame("Lineer vs Lojistik Regresyon Performans ve Karmaşıklık Matrisi");
         pencere.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        pencere.setSize(950, 500);
-        pencere.add(new GrafikPenceresi(lineerHata, lojistikHata, lineerDogruluk, lojistikDogruluk));
+        pencere.setSize(1080, 760);
+        pencere.add(new GrafikPenceresi(lineerHata, lojistikHata, lineerMetrikler, lojistikMetrikler));
         pencere.setLocationRelativeTo(null);
         pencere.setVisible(true);
     }
@@ -350,11 +380,12 @@ class GrafikPenceresi extends JPanel {
 
         int genislik = getWidth();
         int yukseklik = getHeight();
+        int ustH = (int) (yukseklik * 0.52);
 
-        int solX = 60, solY = 50, solW = (genislik / 2) - 90, solH = yukseklik - 110;
+        int solX = 60, solY = 45, solW = (genislik / 2) - 90, solH = ustH - 95;
         g2.setColor(Color.BLACK);
         g2.setFont(new Font("SansSerif", Font.BOLD, 14));
-        g2.drawString("Epoch - Hata (MSE / Loss) Eğrisi", solX + 40, solY - 15);
+        g2.drawString("Epoch - Maliyet J(w) Eğrisi", solX + 40, solY - 15);
 
         g2.drawLine(solX, solY, solX, solY + solH);
         g2.drawLine(solX, solY + solH, solX + solW, solY + solH);
@@ -377,7 +408,7 @@ class GrafikPenceresi extends JPanel {
         }
         g2.drawString("0", solX, solY + solH + 18);
         g2.drawString(String.valueOf(maxEpoch), solX + solW - 25, solY + solH + 18);
-        g2.drawString("Epoch", solX + solW / 2 - 15, solY + solH + 35);
+        g2.drawString("Epoch", solX + solW / 2 - 15, solY + solH + 32);
 
         g2.setStroke(new BasicStroke(2.2f));
         cizgiCiz(g2, lineerHata, maxEpoch, maxHata, solX, solY, solW, solH, new Color(30, 100, 220));
@@ -386,16 +417,16 @@ class GrafikPenceresi extends JPanel {
         g2.setColor(new Color(30, 100, 220));
         g2.fillRect(solX + solW - 150, solY + 10, 12, 12);
         g2.setColor(Color.BLACK);
-        g2.drawString("Lineer (MSE)", solX + solW - 132, solY + 21);
+        g2.drawString("Lineer J(w)", solX + solW - 132, solY + 21);
 
         g2.setColor(new Color(220, 50, 50));
         g2.fillRect(solX + solW - 150, solY + 30, 12, 12);
         g2.setColor(Color.BLACK);
-        g2.drawString("Lojistik (Loss)", solX + solW - 132, solY + 41);
+        g2.drawString("Lojistik J(w)", solX + solW - 132, solY + 41);
 
-        int sagX = (genislik / 2) + 50, sagY = 50, sagW = (genislik / 2) - 100, sagH = yukseklik - 110;
+        int sagX = (genislik / 2) + 40, sagY = 45, sagW = (genislik / 2) - 80, sagH = ustH - 95;
         g2.setFont(new Font("SansSerif", Font.BOLD, 14));
-        g2.drawString("Test Doğruluk Oranı (Accuracy %)", sagX + 40, sagY - 15);
+        g2.drawString("Performans Değerlendirme Metrikleri (%)", sagX + 40, sagY - 15);
 
         g2.drawLine(sagX, sagY, sagX, sagY + sagH);
         g2.drawLine(sagX, sagY + sagH, sagX + sagW, sagY + sagH);
@@ -409,22 +440,75 @@ class GrafikPenceresi extends JPanel {
             g2.drawString("%" + (i * 20), sagX - 35, yPos + 4);
         }
 
-        int barGenislik = 70;
-        int bar1X = sagX + sagW / 4 - barGenislik / 2;
-        int bar1H = (int) (lineerDogruluk * sagH);
-        g2.setColor(new Color(30, 100, 220));
-        g2.fillRect(bar1X, sagY + sagH - bar1H, barGenislik, bar1H);
-        g2.setColor(Color.BLACK);
-        g2.drawString(String.format("%%%.2f", lineerDogruluk * 100), bar1X + 12, sagY + sagH - bar1H - 8);
-        g2.drawString("Lineer Reg.", bar1X + 4, sagY + sagH + 20);
+        String[] metrikAdlari = {"Accuracy", "Precision", "Recall", "F1-Score"};
+        int grupGenislik = sagW / 4;
+        int barW = 28;
 
-        int bar2X = sagX + (3 * sagW / 4) - barGenislik / 2;
-        int bar2H = (int) (lojistikDogruluk * sagH);
-        g2.setColor(new Color(220, 50, 50));
-        g2.fillRect(bar2X, sagY + sagH - bar2H, barGenislik, bar2H);
+        for (int m = 0; m < 4; m++) {
+            int merkezX = sagX + (m * grupGenislik) + (grupGenislik / 2);
+
+            int b1H = (int) (lineerMetrikler[m] * sagH);
+            int b1X = merkezX - barW - 2;
+            g2.setColor(new Color(30, 100, 220));
+            g2.fillRect(b1X, sagY + sagH - b1H, barW, b1H);
+            g2.setColor(Color.BLACK);
+            g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+            g2.drawString(String.format("%.1f", lineerMetrikler[m] * 100), b1X + 2, sagY + sagH - b1H - 5);
+
+            int b2H = (int) (lojistikMetrikler[m] * sagH);
+            int b2X = merkezX + 2;
+            g2.setColor(new Color(220, 50, 50));
+            g2.fillRect(b2X, sagY + sagH - b2H, barW, b2H);
+            g2.setColor(Color.BLACK);
+            g2.drawString(String.format("%.1f", lojistikMetrikler[m] * 100), b2X + 2, sagY + sagH - b2H - 5);
+
+            g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g2.drawString(metrikAdlari[m], merkezX - 24, sagY + sagH + 20);
+        }
+
+        int altY = ustH + 45;
+        karmasiklikMatrisiCiz(g2, "Lineer Regresyon Karmaşıklık Matrisi", lineerMetrikler, solX + 40, altY);
+        karmasiklikMatrisiCiz(g2, "Lojistik Regresyon Karmaşıklık Matrisi", lojistikMetrikler, sagX + 40, altY);
+    }
+
+    void karmasiklikMatrisiCiz(Graphics2D g2, String baslik, double[] m, int x, int y) {
+        int tp = (int) m[4];
+        int tn = (int) m[5];
+        int fp = (int) m[6];
+        int fn = (int) m[7];
+
         g2.setColor(Color.BLACK);
-        g2.drawString(String.format("%%%.2f", lojistikDogruluk * 100), bar2X + 12, sagY + sagH - bar2H - 8);
-        g2.drawString("Lojistik Reg.", bar2X + 2, sagY + sagH + 20);
+        g2.setFont(new Font("SansSerif", Font.BOLD, 14));
+        g2.drawString(baslik, x + 30, y - 15);
+
+        int kutuW = 140, kutuH = 85;
+        int basX = x + 70, basY = y + 25;
+
+        g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+        g2.drawString("Tahmin: 1", basX + 40, basY - 8);
+        g2.drawString("Tahmin: 0", basX + kutuW + 40, basY - 8);
+        g2.drawString("Gerçek: 1", basX - 65, basY + 48);
+        g2.drawString("Gerçek: 0", basX - 65, basY + kutuH + 48);
+
+        kutuCiz(g2, basX, basY, kutuW, kutuH, new Color(200, 240, 205), "TP (Doğru Pozitif)", tp);
+        kutuCiz(g2, basX + kutuW, basY, kutuW, kutuH, new Color(250, 210, 210), "FN (Yanlış Negatif)", fn);
+        kutuCiz(g2, basX, basY + kutuH, kutuW, kutuH, new Color(250, 210, 210), "FP (Yanlış Pozitif)", fp);
+        kutuCiz(g2, basX + kutuW, basY + kutuH, kutuW, kutuH, new Color(200, 240, 205), "TN (Doğru Negatif)", tn);
+    }
+
+    void kutuCiz(Graphics2D g2, int x, int y, int w, int h, Color arkaPlan, String etiket, int deger) {
+        g2.setColor(arkaPlan);
+        g2.fillRect(x, y, w, h);
+        g2.setColor(Color.DARK_GRAY);
+        g2.setStroke(new BasicStroke(1.5f));
+        g2.drawRect(x, y, w, h);
+
+        g2.setColor(Color.BLACK);
+        g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        g2.drawString(etiket, x + 18, y + 28);
+
+        g2.setFont(new Font("SansSerif", Font.BOLD, 20));
+        g2.drawString(String.valueOf(deger), x + (w / 2) - 12, y + 60);
     }
 
     void cizgiCiz(Graphics2D g2, List<Double> veriler, int maxEpoch, double maxHata, int x, int y, int w, int h, Color renk) {
