@@ -4,7 +4,7 @@ import java.util.*;
 public class proje {
     public static void main(String[] args) throws IOException {
         Csv csv = new Csv();
-        csv.csvOkuma("spambase.csv");
+        csv.csvOkuma("sonar data.csv");
         csv.veriyiAyir(csv.datalar, csv.siniflar, 0.66);
 
         LinearRegression lineerModel = new LinearRegression();
@@ -20,6 +20,7 @@ public class proje {
 }
 
 class Csv {
+    String dosyaAdi;
     double[][] datalar;
     double[] siniflar;
     double[][] egitimVerisi;
@@ -28,9 +29,11 @@ class Csv {
     double[] testSiniflari;
 
     void csvOkuma(String dosyaYolu) throws IOException {
+        this.dosyaAdi = dosyaYolu.replace(".csv", "");
         BufferedReader br = new BufferedReader(new FileReader(dosyaYolu));
         List<double[]> satirListesi = new ArrayList<>();
         List<Double> etiketListesi = new ArrayList<>();
+        String referansEtiket = null;
 
         String satir;
         while ((satir = br.readLine()) != null) {
@@ -38,7 +41,6 @@ class Csv {
                 continue;
             String[] degerler = satir.split(",");
 
-            // İlk sütun sayı değilse (örneğin deauth_test.csv'deki başlık satırıysa) bu satırı atla
             try {
                 Double.parseDouble(degerler[0].trim());
             } catch (NumberFormatException e) {
@@ -51,15 +53,15 @@ class Csv {
             }
             satirListesi.add(satirVerisi);
 
-            // Son sütun kontrolü: Sayıysa (2. durum) doğrudan al, String ise (1. durum) dönüştür
             String etiket = degerler[degerler.length - 1].trim();
             try {
-                // 2. Durum: Son sütun zaten sayısal (örn: "0" veya "1")
                 double sayisalEtiket = Double.parseDouble(etiket);
                 etiketListesi.add(sayisalEtiket);
             } catch (NumberFormatException e) {
-                // 1. Durum: Son sütun String (örn: "M" veya "R")
-                etiketListesi.add(etiket.equals("M") ? 1.0 : 0.0);
+                if (referansEtiket == null) {
+                    referansEtiket = etiket;
+                }
+                etiketListesi.add(etiket.equals(referansEtiket) ? 1.0 : 0.0);
             }
         }
         br.close();
@@ -70,7 +72,6 @@ class Csv {
             siniflar[i] = etiketListesi.get(i);
         }
 
-        // Tüm özellikleri (sütunları) Min-Max normalizasyonu ile 0.0 - 1.0 aralığına çek
         normalizeEt();
     }
 
@@ -96,17 +97,16 @@ class Csv {
         }
     }
 
-    void veriyiAyir(double[][] veriler, double[] siniflar, double egitimOrani) {
+    void veriyiAyir(double[][] veriler, double[] siniflar, double egitimOrani) throws IOException {
         int ornekSayisi = veriler.length;
         int egitimSayisi = (int) (ornekSayisi * egitimOrani);
 
-        // Satır indekslerini oluşturup Fisher-Yates algoritması ile saf döngüyle karıştırıyoruz
         int[] indeksler = new int[ornekSayisi];
         for (int i = 0; i < ornekSayisi; i++) {
             indeksler[i] = i;
         }
 
-        Random rastgele = new Random();
+        Random rastgele = new Random(42);
         for (int i = ornekSayisi - 1; i > 0; i--) {
             int j = rastgele.nextInt(i + 1);
             int gecici = indeksler[i];
@@ -120,25 +120,42 @@ class Csv {
         testVerisi = new double[ornekSayisi - egitimSayisi][];
         testSiniflari = new double[ornekSayisi - egitimSayisi];
 
-        // İlk %66'lık kısmı Eğitim setine aktar
         for (int i = 0; i < egitimSayisi; i++) {
             int rastgeleIndeks = indeksler[i];
             egitimVerisi[i] = veriler[rastgeleIndeks];
             egitimSiniflari[i] = siniflar[rastgeleIndeks];
         }
 
-        // Kalan %34'lük kısmı Test setine aktar
         for (int i = egitimSayisi; i < ornekSayisi; i++) {
             int rastgeleIndeks = indeksler[i];
             testVerisi[i - egitimSayisi] = veriler[rastgeleIndeks];
             testSiniflari[i - egitimSayisi] = siniflar[rastgeleIndeks];
         }
+
+        csvKaydet(dosyaAdi + "_egitim.csv", egitimVerisi, egitimSiniflari);
+        csvKaydet(dosyaAdi + "_test.csv", testVerisi, testSiniflari);
+    }
+
+    void csvKaydet(String kayitYolu, double[][] veriler, double[] etiketler) throws IOException {
+        BufferedWriter bw = new BufferedWriter(new FileWriter(kayitYolu));
+        for (int i = 0; i < veriler.length; i++) {
+            StringBuilder satir = new StringBuilder();
+            for (int j = 0; j < veriler[i].length; j++) {
+                satir.append(veriler[i][j]).append(",");
+            }
+            satir.append(etiketler[i]);
+            bw.write(satir.toString());
+            bw.newLine();
+        }
+        bw.close();
     }
 }
 
 class LinearRegression {
     double[] agirliklar;
     double b = 0.0;
+    double[] gradyanLineerW;
+    double gradyanLineerB = 0.0;
     double ogrenmeOrani = 0.003;
     int iterasyon = 10000;
     double tolerans = 1e-6;
@@ -150,8 +167,8 @@ class LinearRegression {
         double oncekiMse = Double.MAX_VALUE;
 
         for (int epoch = 0; epoch < iterasyon; epoch++) {
-            double[] gradyanW = new double[ozellikSayisi];
-            double gradyanB = 0.0;
+            gradyanLineerW = new double[ozellikSayisi];
+            gradyanLineerB = 0.0;
             double toplamKareHata = 0.0;
 
             for (int i = 0; i < satirSayisi; i++) {
@@ -161,16 +178,17 @@ class LinearRegression {
                 toplamKareHata += Math.pow(hata, 2);
 
                 for (int j = 0; j < ozellikSayisi; j++) {
-                    gradyanW[j] += hata * X[i][j];
+                    gradyanLineerW[j] += hata * X[i][j];
                 }
-                gradyanB += hata;
+                gradyanLineerB += hata;
             }
 
-            // Ağırlıkları (w) ve sabiti (b) güncelle
             for (int j = 0; j < ozellikSayisi; j++) {
-                agirliklar[j] -= ogrenmeOrani * (2.0 / satirSayisi) * gradyanW[j];
+                gradyanLineerW[j] = (2.0 / satirSayisi) * gradyanLineerW[j];
+                agirliklar[j] -= ogrenmeOrani * gradyanLineerW[j];
             }
-            b -= ogrenmeOrani * (2.0 / satirSayisi) * gradyanB;
+            gradyanLineerB = (2.0 / satirSayisi) * gradyanLineerB;
+            b -= ogrenmeOrani * gradyanLineerB;
 
             double mse = toplamKareHata / satirSayisi;
 
@@ -180,6 +198,9 @@ class LinearRegression {
             }
             oncekiMse = mse;
         }
+
+        System.out.println("Lineer Regresyon Son Gradyan W: " + Arrays.toString(gradyanLineerW));
+        System.out.println("Lineer Regresyon Son Gradyan B: " + gradyanLineerB);
     }
 
     double tahminEtHam(double[] x) {
@@ -208,11 +229,12 @@ class LinearRegression {
 class LogisticRegression {
     double[] agirliklar;
     double b = 0.0;
+    double[] gradyanW;
+    double gradyanB = 0.0;
     double ogrenmeOrani = 0.05;
     int iterasyon = 10000;
     double tolerans = 1e-6;
 
-    // Sigmoid aktivasyon fonksiyonu: 1 / (1 + e^(-z))
     double sigmoid(double z) {
         return 1.0 / (1.0 + Math.exp(-z));
     }
@@ -224,15 +246,14 @@ class LogisticRegression {
         double oncekiLoss = Double.MAX_VALUE;
 
         for (int epoch = 0; epoch < iterasyon; epoch++) {
-            double[] gradyanW = new double[ozellikSayisi];
-            double gradyanB = 0.0;
+            gradyanW = new double[ozellikSayisi];
+            gradyanB = 0.0;
             double toplamLoss = 0.0;
 
             for (int i = 0; i < satirSayisi; i++) {
                 double olasilik = olasilikTahminEt(X[i]);
                 double hata = olasilik - y[i];
 
-                // Log-Loss (Cross-Entropy) hesabı (log(0) hatasını önlemek için 1e-15 ile sınırlandırılır)
                 double p = Math.max(1e-15, Math.min(1.0 - 1e-15, olasilik));
                 toplamLoss += -(y[i] * Math.log(p) + (1.0 - y[i]) * Math.log(1.0 - p));
 
@@ -242,11 +263,12 @@ class LogisticRegression {
                 gradyanB += hata;
             }
 
-            // Ağırlıkları (w) ve sabiti (b) güncelle
             for (int j = 0; j < ozellikSayisi; j++) {
-                agirliklar[j] -= ogrenmeOrani * (1.0 / satirSayisi) * gradyanW[j];
+                gradyanW[j] = (1.0 / satirSayisi) * gradyanW[j];
+                agirliklar[j] -= ogrenmeOrani * gradyanW[j];
             }
-            b -= ogrenmeOrani * (1.0 / satirSayisi) * gradyanB;
+            gradyanB = (1.0 / satirSayisi) * gradyanB;
+            b -= ogrenmeOrani * gradyanB;
 
             double ortalamaLoss = toplamLoss / satirSayisi;
 
@@ -256,6 +278,9 @@ class LogisticRegression {
             }
             oncekiLoss = ortalamaLoss;
         }
+
+        System.out.println("Lojistik Regresyon Son Gradyan W: " + Arrays.toString(gradyanW));
+        System.out.println("Lojistik Regresyon Son Gradyan B: " + gradyanB);
     }
 
     double olasilikTahminEt(double[] x) {
